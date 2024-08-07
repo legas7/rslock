@@ -120,11 +120,11 @@ impl LockManager {
 
     /// Get 20 random bytes from the pseudorandom interface.
     pub fn get_unique_lock_id(&self) -> io::Result<Vec<u8>> {
-        || -> Result<Vec<u8>, io::Error> {
+        {
             let mut buf = [0u8; 20];
             thread_rng().fill_bytes(&mut buf);
             Ok(buf.to_vec())
-        }()
+        }
     }
 
     /// Set retry count and retry delay.
@@ -363,7 +363,7 @@ mod tests {
     fn create_clients() -> (Containers, Vec<String>) {
         let containers: Containers = (1..=3)
             .map(|_| {
-                let image = RunnableImage::from(Redis::default()).with_tag("7-alpine");
+                let image = RunnableImage::from(Redis).with_tag("7-alpine");
                 DOCKER.run(image)
             })
             .collect();
@@ -457,7 +457,7 @@ mod tests {
         let mut con = rl.servers[0].get_connection()?;
 
         redis::cmd("DEL").arg(&*key).execute(&mut con);
-        assert!(LockManager::lock_instance(&rl.servers[0], &*key, val.clone(), 1000).await);
+        assert!(LockManager::lock_instance(&rl.servers[0], &key, val.clone(), 1000).await);
 
         Ok(())
     }
@@ -671,11 +671,8 @@ mod tests {
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
             // Assert rl2 can lock with the key now
-            match rl2.lock(&key, Duration::from_millis(1000)).await {
-                Err(_) => {
-                    panic!("Unexpected error when trying to claim free lock after extend expired")
-                }
-                _ => (),
+            if rl2.lock(&key, Duration::from_millis(1000)).await.is_err() {
+                panic!("Unexpected error when trying to claim free lock after extend expired")
             }
 
             // Also assert rl1 can't reuse lock1
@@ -725,9 +722,8 @@ mod tests {
 
         // Too big Duration, fails - technical limit is from_millis(u64::MAX)
         let ttl = Duration::from_secs(u64::MAX);
-        match rl.lock(&key, ttl).await {
-            Ok(_) => panic!("Expected LockError::TtlTooLarge"),
-            Err(_) => (), // Test passes
+        if rl.lock(&key, ttl).await.is_ok() {
+            panic!("Expected LockError::TtlTooLarge")
         }
     }
 }
